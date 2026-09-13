@@ -46,18 +46,34 @@ jobs:
           path: droidctl
           retention-days: 7
 
-      - name: Package for release
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package per-arch tarballs
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          tar -czf "droidctl-${VER}-${GOARCH}.tar.gz" droidctl
-          echo "pkg=droidctl-${VER}-${GOARCH}.tar.gz" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
+          for d in artifacts/droidctl-*/; do
+            arch="$(basename "$d" | sed -E 's/^droidctl-([^-]+)-.*/\1/')"
+            cp "$d/droidctl" "droidctl-${arch}"
+            tar -czf "dist/droidctl-${VER}-${arch}.tar.gz" "droidctl-${arch}"
+            rm -f "droidctl-${arch}"
+          done
+          ls -la dist/
 
-      - name: Publish to GitHub Releases
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish to GitHub Releases (once)
         uses: softprops/action-gh-release@v2
         with:
-          files: droidctl-*.tar.gz
+          files: dist/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
