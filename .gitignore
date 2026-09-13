@@ -1,0 +1,11 @@
+# binaries
+droidctl
+droidctl-go
+actionlint
+
+# Go build artifacts
+*.tar.gz
+
+# editor/OS
+.DS_Store
+*.swp

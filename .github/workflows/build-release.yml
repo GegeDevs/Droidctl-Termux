@@ -4,47 +4,131 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [arm64, amd64]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Lint droidctl (bash syntax + sanity)
-        run: |
-          bash -n droidctl
-          echo "syntax OK"
-          ./droidctl help | head -5
-          file droidctl
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
 
-      - name: Package
-        id: package
+      - name: Build static binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          go vet ./...
+          go build -trimpath -ldflags="-s -w" -o droidctl .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidctl-${{ matrix.goarch }}-${{ github.sha }}
+          path: droidctl
+          retention-days: 7
+
+      - name: Package for release
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          [ "$VER" = "$GITHUB_REF_NAME" ] && VER="latest"
-          PKG="droidctl-${VER}.tar.gz"
-          tar -czf "$PKG" droidctl
-          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
-          ls -la "$PKG"
+          tar -czf "droidctl-${VER}-${GOARCH}.tar.gz" droidctl
+          echo "pkg=droidctl-${VER}-${GOARCH}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Publish to GitHub Releases
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.package.outputs.pkg }}
-          name: ${{ steps.package.outputs.pkg }}
+          files: droidctl-*.tar.gz
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifact (workflow_dispatch only)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v4
+  notify-telegram:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download semua artifact
+        uses: actions/download-artifact@v4
         with:
-          name: droidctl
-          path: 'droidctl-*.tar.gz'
+          path: artifacts
+        continue-on-error: true
+
+      - name: Susun info commit (caption)
+        id: commit
+        run: |
+          MSG="$(git log -1 --pretty=%s 2>/dev/null || echo no-message)"
+          SHA="${GITHUB_SHA:0:7}"
+          echo "info=[${GITHUB_REF_NAME}] ${SHA} ${MSG}" >> "$GITHUB_OUTPUT"
+
+      - name: Kirim artifact ke Telegram (HTML caption, link run, rename SHA7)
+        if: hashFiles('artifacts/**') != ''
+        continue-on-error: true   # jangan blokir build kalau secrets belum di-set
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CAPTION_INFO: ${{ steps.commit.outputs.info }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          RUN_ID="${{ github.run_id }}"
+          SHA7="${GITHUB_SHA:0:7}"
+          TG_MAX_BYTES=52428800
+          : "${TG_TOKEN:?set secret TELEGRAM_BOT_TOKEN}"
+          : "${TG_CHAT:?set secret TELEGRAM_CHAT_ID}"
+          esc_html() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+          INFO_ESC="$(printf '%s' "$CAPTION_INFO" | esc_html)"
+          run_url="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          count=0
+          while IFS= read -r f; do
+            orig="$(basename "$f")"
+            base="${orig%.*}"
+            ext="${orig##*.}"
+            if [ "$base" != "$orig" ]; then
+              name="${base}-${SHA7}.${ext}"
+            else
+              name="${orig}-${SHA7}"
+            fi
+            size=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            if [ "$size" -gt "$TG_MAX_BYTES" ]; then
+              echo "Skip (${size} bytes > 50MB): $name"
+              curl -s -f \
+                -F chat_id="$TG_CHAT" \
+                -F "text=⚠️ ${name} (${size} bytes) melebihi 50MB — tidak bisa dikirim via Telegram.\nLihat: ${run_url}" \
+                "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" >/dev/null
+              continue
+            fi
+            echo "Upload: $name"
+            caption="<b>${REPO}</b> run <a href=\"${run_url}\">${RUN_ID}</a> | ${INFO_ESC} | <code>${name}</code>"
+            body="$(curl -s -f \
+              -F chat_id="$TG_CHAT" \
+              -F "parse_mode=HTML" \
+              -F "caption=${caption}" \
+              -F "document=@${f};filename=${name}" \
+              "https://api.telegram.org/bot${TG_TOKEN}/sendDocument")"
+            echo "$body" | grep -q '"ok":true' || { echo "Gagal upload $name: $body"; exit 1; }
+            count=$((count+1))
+            sleep 1
+          done < <(find artifacts -type f)
+          echo "Terkirim: $count artifact(s)"
