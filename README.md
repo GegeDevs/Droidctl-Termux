@@ -28,10 +28,19 @@ curl http://127.0.0.1:80          # → Welcome to nginx!
 
 ## Install
 
+Download the **static binary** for your architecture from the [Releases](https://github.com/GegeDevs/Droidctl-Termux/releases) page (built by GitHub Actions, `CGO_ENABLED=0` — no dependencies):
+
 ```sh
-cp droidctl ~/bin/droidctl && chmod +x ~/bin/droidctl
-# or: curl -sL <release-url> -o ~/bin/droidctl && chmod +x ~/bin/droidctl
+# Termux / Android arm64:
+curl -sL <release-url>/droidctl-<ver>-arm64.tar.gz -o droidctl.tar.gz
+tar -xzf droidctl.tar.gz
+chmod +x droidctl
+mv droidctl ~/bin/droidctl
 ```
+
+Or grab the artifact from the latest CI run (`workflow_dispatch` / push to main → `droidctl-arm64-<sha>`).
+
+> Go not needed locally — all compilation happens in GitHub Actions.
 
 ## Usage
 
