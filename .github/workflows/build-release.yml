@@ -64,9 +64,9 @@ jobs:
           mkdir -p dist
           for d in artifacts/droidctl-*/; do
             arch="$(basename "$d" | sed -E 's/^droidctl-([^-]+)-.*/\1/')"
-            cp "$d/droidctl" "droidctl-${arch}"
-            tar -czf "dist/droidctl-${VER}-${arch}.tar.gz" "droidctl-${arch}"
-            rm -f "droidctl-${arch}"
+            cp "$d/droidctl" "./droidctl"
+            tar -czf "dist/droidctl-${VER}-${arch}.tar.gz" droidctl
+            rm -f ./droidctl
           done
           ls -la dist/
 
