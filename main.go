@@ -21,7 +21,15 @@ type Config struct {
 var cfg Config
 
 func init() {
-	home, _ := os.UserHomeDir()
+	home := os.Getenv("HOME")
+	if home == "" || home == "/" {
+		// Running as root via su: $HOME may be /; fall back to Termux home.
+		if th := os.Getenv("TERMUX_HOME"); th != "" {
+			home = th
+		} else {
+			home = "/data/data/com.termux/files/home"
+		}
+	}
 	cfg = Config{
 		DS:         getenv("DROIDSPACES_BIN", "/data/local/Droidspaces/bin/droidspaces"),
 		Crane:      getenv("CRANE_BIN", filepath.Join(home, "crane")),
