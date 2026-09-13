@@ -1,0 +1,50 @@
+name: Build & Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint droidctl (bash syntax + sanity)
+        run: |
+          bash -n droidctl
+          echo "syntax OK"
+          ./droidctl help | head -5
+          file droidctl
+
+      - name: Package
+        id: package
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          [ "$VER" = "$GITHUB_REF_NAME" ] && VER="latest"
+          PKG="droidctl-${VER}.tar.gz"
+          tar -czf "$PKG" droidctl
+          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
+          ls -la "$PKG"
+
+      - name: Publish to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.pkg }}
+          name: ${{ steps.package.outputs.pkg }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (workflow_dispatch only)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidctl
+          path: 'droidctl-*.tar.gz'
